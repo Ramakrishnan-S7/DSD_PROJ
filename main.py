@@ -3,6 +3,7 @@ import time
 from array import array
 from pico_i2c_lcd import I2cLcd
 
+# [ADXL345 class remains the same]
 class ADXL345:
     def __init__(self, i2c, addr=0x53):
         self.i2c = i2c
@@ -61,8 +62,30 @@ class StepCounter:
         self.pos_x = self.pos_y = self.pos_z = 0
         self.last_step_time = time.time()
         
+        # Stabilization flag and counter
+        self.is_stabilized = False
+        self.stabilization_samples = 0
+        self.required_samples = 50  # Number of samples needed before starting detection
+        
         # Initialize LCD
-        self.update_display()
+        self.lcd.clear()
+        self.lcd.move_to(0, 0)
+        self.lcd.putstr("Calibrating...")
+        self.lcd.move_to(0, 1)
+        self.lcd.putstr("Please wait")
+        
+        # Initial buffer fill
+        self._fill_initial_buffers()
+
+    def _fill_initial_buffers(self):
+        """Fill the buffers with initial readings to stabilize the sensor"""
+        for _ in range(self.window_size):
+            x, y, z = self.sensor.read_accel()
+            self.acc_x[self.current_index] = x
+            self.acc_y[self.current_index] = y
+            self.acc_z[self.current_index] = z
+            self.current_index = (self.current_index + 1) % self.window_size
+            time.sleep(0.01)
 
     def set_step_length(self, length_meters):
         self.step_length = length_meters
@@ -73,12 +96,20 @@ class StepCounter:
         self.lcd.move_to(0, 0)
         self.lcd.putstr(f"Steps: {self.steps}")
         self.lcd.move_to(0, 1)
-        distance_m = self.total_distance
         distance_ft = self.total_distance * 3.28084
         self.lcd.putstr(f"Dist:{distance_ft:.1f}ft")
         
     def update(self):
         x, y, z = self.sensor.read_accel()
+        
+        # Handle stabilization period
+        if not self.is_stabilized:
+            self.stabilization_samples += 1
+            if self.stabilization_samples >= self.required_samples:
+                self.is_stabilized = True
+                self.update_display()  # Show initial zeros
+                return False
+            return False
         
         # Update circular buffers
         self.acc_x[self.current_index] = x
@@ -127,11 +158,11 @@ def main():
     # Initialize I2C for ADXL345
     i2c_sensor = I2C(0, scl=Pin(17), sda=Pin(16), freq=400000)
     
-    # Initialize I2C for LCD (using different pins)
+    # Initialize I2C for LCD
     i2c_lcd = I2C(1, scl=Pin(19), sda=Pin(18), freq=400000)
     
     try:
-        # Initialize LCD (adjust address as needed, typically 0x27 or 0x3F)
+        # Initialize LCD (adjust address as needed)
         lcd = I2cLcd(i2c_lcd, 0x27, 2, 16)  # 2 lines, 16 columns
         
         # Initialize ADXL345
@@ -139,9 +170,6 @@ def main():
         
         # Create step counter with LCD
         stepper = StepCounter(adxl, lcd)
-        
-        # Optional: Set custom step length
-        # stepper.set_step_length(0.8)  # For longer steps
         
         print("Step counter started. Press Ctrl+C to exit.")
         
