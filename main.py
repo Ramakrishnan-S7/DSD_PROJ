@@ -1,9 +1,9 @@
 from machine import Pin, I2C
 import time
 from array import array
+from pico_i2c_lcd import I2cLcd
 
 class ADXL345:
-    # [Previous ADXL345 implementation remains the same]
     def __init__(self, i2c, addr=0x53):
         self.i2c = i2c
         self.addr = addr
@@ -35,17 +35,18 @@ class ADXL345:
         return (x, y, z)
 
 class StepCounter:
-    def __init__(self, adxl345):
+    def __init__(self, adxl345, lcd):
         self.sensor = adxl345
+        self.lcd = lcd
         self.steps = 0
-        self.total_distance = 0.0  # Total distance in meters
+        self.total_distance = 0.0
         
         # Step length in meters (2.5 feet ≈ 0.762 meters)
         self.step_length = 0.762
         
         # Parameters for step detection
         self.window_size = 25
-        self.min_step_distance = 0.04  # For detection, not actual step length
+        self.min_step_distance = 0.04
         self.min_step_time = 0.3
         self.velocity_decay = 0.95
         
@@ -59,10 +60,22 @@ class StepCounter:
         self.vel_x = self.vel_y = self.vel_z = 0
         self.pos_x = self.pos_y = self.pos_z = 0
         self.last_step_time = time.time()
+        
+        # Initialize LCD
+        self.update_display()
 
     def set_step_length(self, length_meters):
-        """Set the step length in meters"""
         self.step_length = length_meters
+        
+    def update_display(self):
+        """Update the LCD with current steps and distance"""
+        self.lcd.clear()
+        self.lcd.move_to(0, 0)
+        self.lcd.putstr(f"Steps: {self.steps}")
+        self.lcd.move_to(0, 1)
+        distance_m = self.total_distance
+        distance_ft = self.total_distance * 3.28084
+        self.lcd.putstr(f"Dist:{distance_ft:.1f}ft")
         
     def update(self):
         x, y, z = self.sensor.read_accel()
@@ -77,7 +90,7 @@ class StepCounter:
         avg_y = sum(self.acc_y) / self.window_size
         avg_z = sum(self.acc_z) / self.window_size
         
-        dt = 0.01  # 100Hz sampling rate
+        dt = 0.01
         
         # Update velocities with decay
         self.vel_x = (self.vel_x + (x - avg_x) * dt) * self.velocity_decay
@@ -97,8 +110,11 @@ class StepCounter:
         if (displacement > self.min_step_distance and 
             (current_time - self.last_step_time) > self.min_step_time):
             self.steps += 1
-            self.total_distance += self.step_length  # Add one step length
+            self.total_distance += self.step_length
             self.last_step_time = current_time
+            
+            # Update LCD display
+            self.update_display()
             
             # Reset position tracking for next step detection
             self.pos_x = self.pos_y = self.pos_z = 0
@@ -106,48 +122,36 @@ class StepCounter:
             
         self.current_index = (self.current_index + 1) % self.window_size
         return False
-    
-    def get_steps(self):
-        return self.steps
-    
-    def get_distance(self):
-        """Get total distance in meters"""
-        return self.total_distance
-    
-    def get_distance_feet(self):
-        """Get total distance in feet"""
-        return self.total_distance * 3.28084  # Convert meters to feet
 
 def main():
-    # Initialize I2C
-    i2c = I2C(0, scl=Pin(17), sda=Pin(16), freq=400000)
+    # Initialize I2C for ADXL345
+    i2c_sensor = I2C(0, scl=Pin(17), sda=Pin(16), freq=400000)
+    
+    # Initialize I2C for LCD (using different pins)
+    i2c_lcd = I2C(1, scl=Pin(19), sda=Pin(18), freq=400000)
     
     try:
-        adxl = ADXL345(i2c)
-        stepper = StepCounter(adxl)
+        # Initialize LCD (adjust address as needed, typically 0x27 or 0x3F)
+        lcd = I2cLcd(i2c_lcd, 0x27, 2, 16)  # 2 lines, 16 columns
         
-        # Optional: Set custom step length (in meters)
+        # Initialize ADXL345
+        adxl = ADXL345(i2c_sensor)
+        
+        # Create step counter with LCD
+        stepper = StepCounter(adxl, lcd)
+        
+        # Optional: Set custom step length
         # stepper.set_step_length(0.8)  # For longer steps
-        # stepper.set_step_length(0.7)  # For shorter steps
         
         print("Step counter started. Press Ctrl+C to exit.")
-        print("Default step length: 2.5 feet (0.762 meters)")
         
         while True:
-            if stepper.update():
-                steps = stepper.get_steps()
-                distance_m = stepper.get_distance()
-                distance_ft = stepper.get_distance_feet()
-                print(f"Steps: {steps} | Distance: {distance_m:.1f}m ({distance_ft:.1f}ft)")
+            stepper.update()
             time.sleep(0.01)
             
     except KeyboardInterrupt:
-        steps = stepper.get_steps()
-        distance_m = stepper.get_distance()
-        distance_ft = stepper.get_distance_feet()
-        print(f"\nFinal measurements:")
-        print(f"Steps: {steps}")
-        print(f"Distance: {distance_m:.1f} meters ({distance_ft:.1f} feet)")
+        lcd.clear()
+        lcd.putstr("Counter stopped")
     except Exception as e:
         print(f"Error: {e}")
 
