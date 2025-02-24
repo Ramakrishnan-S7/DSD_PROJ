@@ -3,13 +3,13 @@ import time
 from array import array
 from pico_i2c_lcd import I2cLcd
 
-# [ADXL345 class remains the same]
+#library for ADXL345
 class ADXL345:
     def __init__(self, i2c, addr=0x53):
         self.i2c = i2c
         self.addr = addr
         
-        # Initialize the ADXL345
+      
         self.i2c.writeto_mem(self.addr, 0x2D, b'\x08')  # Power on
         self.i2c.writeto_mem(self.addr, 0x31, b'\x0B')  # ±16g range, full resolution
         self.i2c.writeto_mem(self.addr, 0x2C, b'\x0A')  # 100Hz data rate
@@ -45,7 +45,7 @@ class StepCounter:
         # Step length in meters (2.5 feet ≈ 0.762 meters)
         self.step_length = 0.762
         
-        # Parameters for step detection
+        # min req to count step
         self.window_size = 25
         self.min_step_distance = 0.04
         self.min_step_time = 0.3
@@ -91,7 +91,7 @@ class StepCounter:
         self.step_length = length_meters
         
     def update_display(self):
-        """Update the LCD with current steps and distance"""
+        #print steps and distance
         self.lcd.clear()
         self.lcd.move_to(0, 0)
         self.lcd.putstr(f"Steps: {self.steps}")
@@ -162,8 +162,8 @@ def main():
     i2c_lcd = I2C(1, scl=Pin(19), sda=Pin(18), freq=400000)
     
     try:
-        # Initialize LCD (adjust address as needed)
-        lcd = I2cLcd(i2c_lcd, 0x27, 2, 16)  # 2 lines, 16 columns
+        # Initialize LCD 
+        lcd = I2cLcd(i2c_lcd, 0x27, 2, 16)  
         
         # Initialize ADXL345
         adxl = ADXL345(i2c_sensor)
