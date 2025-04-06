@@ -1,0 +1,109 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// LCD setup
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // I2C address 0x27 (may vary, use scanner if needed)
+
+// Variables
+int PulseSensorPurplePin = 26;        // Pulse Sensor PURPLE WIRE connected to ANALOG PIN 26
+int LED = 14;                         // GPIO 14 for LED
+
+int Signal;                           // Holds the incoming raw data
+int Threshold = 580;                  // Pulse threshold
+
+// BPM Calculation
+unsigned long lastBeatTime = 0;
+unsigned long lastDisplayTime = 0;
+int beatCount = 0;
+int BPM = 0;
+const unsigned long DISPLAY_INTERVAL = 3000;
+
+void setup() {
+  pinMode(LED, OUTPUT);
+  Serial.begin(115200);
+
+  // Setup custom I2C pins (SDA = 18, SCL = 19)
+  Wire.setSDA(18);
+  Wire.setSCL(19);
+  Wire.begin();
+
+  // Initialize LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Pulse Sensor");
+  lcd.setCursor(0, 1);
+  lcd.print("Initializing...");
+  delay(2000);
+  lcd.clear();
+  lcd.print("Waiting for");
+  lcd.setCursor(0, 1);
+  lcd.print("pulse...");
+
+  Serial.println("Pulse Sensor Initialized");
+  Serial.println("Waiting for valid pulse readings...");
+}
+
+void loop() {
+  unsigned long currentTime = millis();
+  Signal = analogRead(PulseSensorPurplePin);
+
+  // Optional: output raw signal for plotting
+  Serial.println("Signal " + String(Signal));
+
+  // Beat detection
+  if (Signal > Threshold) {
+    if (digitalRead(LED) == LOW) {
+      digitalWrite(LED, HIGH);
+
+      if (lastBeatTime > 0) {
+        unsigned long timeSinceLastBeat = currentTime - lastBeatTime;
+        if (timeSinceLastBeat > 300 && timeSinceLastBeat < 1500) {
+          beatCount++;
+          BPM = 60000 / timeSinceLastBeat;
+        }
+      }
+
+      lastBeatTime = currentTime;
+    }
+  } else {
+    digitalWrite(LED, LOW);
+  }
+
+  // Display BPM every 3 seconds
+  if (currentTime - lastDisplayTime >= DISPLAY_INTERVAL) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+
+    if (beatCount > 0) {
+      int avgBPM = (beatCount * 60000) / DISPLAY_INTERVAL;
+
+      lcd.print("BPM: ");
+      lcd.print(BPM);           // Instantaneous BPM
+      lcd.setCursor(0, 1);
+      lcd.print("Avg: ");
+      lcd.print(avgBPM);        // Average over 3 seconds
+
+      Serial.println("------------------------");
+      Serial.print("Heart Rate: ");
+      Serial.print(BPM);
+      Serial.print(" BPM (Instant), ");
+      Serial.print(avgBPM);
+      Serial.println(" BPM (3-sec avg)");
+      Serial.println("------------------------");
+    } else {
+      lcd.print("No Pulse");
+      lcd.setCursor(0, 1);
+      lcd.print("Try Again");
+
+      Serial.println("------------------------");
+      Serial.println("No valid pulse detected");
+      Serial.println("------------------------");
+    }
+
+    lastDisplayTime = currentTime;
+    beatCount = 0;
+  }
+
+  delay(20);
+}
