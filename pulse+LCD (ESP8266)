@@ -1,0 +1,115 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// LCD setup: 0x27 is common; change if needed
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// Pin assignments (ESP8266)
+const int PulseSensorPurplePin = A0; // ESP8266 has only one analog pin
+const int LED = 2;                   // Built-in LED (D4 on NodeMCU)
+
+// Variables
+int Signal = 0;
+int Threshold = 580;
+
+unsigned long lastBeatTime = 0;
+unsigned long lastDisplayTime = 0;
+int beatCount = 0;
+int BPM = 0;
+const unsigned long DISPLAY_INTERVAL = 3000;
+
+void setup() {
+  pinMode(LED, OUTPUT);
+  Serial.begin(115200);
+
+  // I2C setup for ESP8266 (D2 = SDA, D1 = SCL)
+  Wire.begin(4, 5); // SDA = GPIO4 (D2), SCL = GPIO5 (D1)
+
+  // LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Pulse Sensor");
+  lcd.setCursor(0, 1);
+  lcd.print("Initializing...");
+  delay(2000);
+  lcd.clear();
+  lcd.print("Waiting for");
+  lcd.setCursor(0, 1);
+  lcd.print("pulse...");
+
+  Serial.println("Pulse Sensor Initialized");
+  Serial.println("Waiting for valid pulse readings...");
+}
+
+void loop() {
+  unsigned long currentTime = millis();
+  Signal = analogRead(PulseSensorPurplePin);
+
+  Serial.println("Signal " + String(Signal));
+
+  if (Signal > Threshold) {
+    if (digitalRead(LED) == LOW) {
+      digitalWrite(LED, HIGH);
+
+      if (lastBeatTime > 0) {
+        unsigned long timeSinceLastBeat = currentTime - lastBeatTime;
+        if (timeSinceLastBeat > 300 && timeSinceLastBeat < 1500) {
+          beatCount++;
+          BPM = 60000 / timeSinceLastBeat;
+        }
+      }
+
+      lastBeatTime = currentTime;
+    }
+  } else {
+    digitalWrite(LED, LOW);
+  }
+
+  if (currentTime - lastDisplayTime >= DISPLAY_INTERVAL) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+
+    if (beatCount > 0) {
+      int avgBPM = (beatCount * 60000) / DISPLAY_INTERVAL;
+
+      lcd.print("BPM: ");
+      lcd.print(BPM);
+      lcd.setCursor(0, 1);
+      lcd.print("Avg: ");
+      lcd.print(avgBPM);
+
+      Serial.println("------------------------");
+      Serial.print("Heart Rate: ");
+      Serial.print(BPM);
+      Serial.print(" BPM (Instant), ");
+      Serial.print(avgBPM);
+      Serial.println(" BPM (3-sec avg)");
+      Serial.println("------------------------");
+    } else {
+      lcd.print("No Pulse");
+      lcd.setCursor(0, 1);
+      lcd.print("Try Again");
+
+      Serial.println("------------------------");
+      Serial.println("No valid pulse detected");
+      Serial.println("------------------------");
+    }
+
+    lastDisplayTime = currentTime;
+    beatCount = 0;
+  }
+
+  delay(20);
+}
+
+
+
+
+/*
+Pulse Sensor	A0 (Analog In)
+I2C LCD - SDA	D2 (GPIO 4)
+I2C LCD - SCL	D1 (GPIO 5)
+LED (optional)	D4 (GPIO 2)
+
+*/
