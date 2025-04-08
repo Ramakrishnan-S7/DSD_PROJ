@@ -1,115 +1,121 @@
-#include <Wire.h>
-#include <LiquidCrystal_I2C.h>
+#include <PulseSensorPlayground.h>     // Includes the PulseSensorPlayground Library
+#include <LiquidCrystal.h>             // Includes the LCD Library
 
-// LCD setup: 0x27 is common; change if needed
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+// PulseSensor Variables
+const int PulseWire = 0;       // PulseSensor PURPLE WIRE connected to ANALOG PIN 0
+const int LED = LED_BUILTIN;   // The on-board Arduino LED, close to PIN 13
+int Threshold = 550;           // Determine which Signal to "count as a beat" and which to ignore
 
-// Pin assignments (ESP8266)
-const int PulseSensorPurplePin = A0; // ESP8266 has only one analog pin
-const int LED = 2;                   // Built-in LED (D4 on NodeMCU)
+// LCD Variables
+const int rs = 12, en = 11, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 
-// Variables
-int Signal = 0;
-int Threshold = 580;
+// Custom heart character
+byte heartChar[8] = {
+  0b00000,
+  0b01010,
+  0b11111,
+  0b11111,
+  0b11111,
+  0b01110,
+  0b00100,
+  0b00000
+};
 
-unsigned long lastBeatTime = 0;
-unsigned long lastDisplayTime = 0;
-int beatCount = 0;
-int BPM = 0;
-const unsigned long DISPLAY_INTERVAL = 3000;
+// Variables for timing
+unsigned long lastUpdateTime = 0;
+const unsigned long updateInterval = 2500; // 2.5 seconds in milliseconds
+
+// Create a PulseSensor object
+PulseSensorPlayground pulseSensor;
 
 void setup() {
-  pinMode(LED, OUTPUT);
-  Serial.begin(115200);
-
-  // I2C setup for ESP8266 (D2 = SDA, D1 = SCL)
-  Wire.begin(4, 5); // SDA = GPIO4 (D2), SCL = GPIO5 (D1)
-
-  // LCD
-  lcd.init();
-  lcd.backlight();
+  Serial.begin(115200);          // For Serial Monitor
+  
+  // Initialize LCD
+  lcd.begin(16, 2);              // Set up the LCD's number of columns and rows
+  lcd.createChar(0, heartChar);  // Create custom heart character
+  
+  // Display startup message
   lcd.setCursor(0, 0);
-  lcd.print("Pulse Sensor");
+  lcd.print("BPM Monitor");
   lcd.setCursor(0, 1);
   lcd.print("Initializing...");
-  delay(2000);
-  lcd.clear();
-  lcd.print("Waiting for");
-  lcd.setCursor(0, 1);
-  lcd.print("pulse...");
+  
+  // Configure the PulseSensor object
+  pulseSensor.analogInput(PulseWire);   
+  pulseSensor.blinkOnPulse(LED);        // Auto-magically blink Arduino's LED with heartbeat
+  pulseSensor.setThreshold(Threshold);   
 
-  Serial.println("Pulse Sensor Initialized");
-  Serial.println("Waiting for valid pulse readings...");
+  // Start the PulseSensor
+  if (pulseSensor.begin()) {
+    Serial.println("PulseSensor initialized!");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("BPM: ---");
+    lcd.setCursor(0, 1);
+    lcd.print("Ready...");
+  } else {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Sensor Error!");
+    while(1); // If sensor failed to start, halt program
+  }
+  
+  delay(2000); // Short delay to read the startup message
+  lcd.clear();
 }
 
 void loop() {
+  // Get the current time
   unsigned long currentTime = millis();
-  Signal = analogRead(PulseSensorPurplePin);
-
-  Serial.println("Signal " + String(Signal));
-
-  if (Signal > Threshold) {
-    if (digitalRead(LED) == LOW) {
-      digitalWrite(LED, HIGH);
-
-      if (lastBeatTime > 0) {
-        unsigned long timeSinceLastBeat = currentTime - lastBeatTime;
-        if (timeSinceLastBeat > 300 && timeSinceLastBeat < 1500) {
-          beatCount++;
-          BPM = 60000 / timeSinceLastBeat;
-        }
-      }
-
-      lastBeatTime = currentTime;
-    }
-  } else {
-    digitalWrite(LED, LOW);
-  }
-
-  if (currentTime - lastDisplayTime >= DISPLAY_INTERVAL) {
-    lcd.clear();
+  
+  // Process any available heartbeats
+  int myBPM = pulseSensor.getBeatsPerMinute();
+  
+  // Check if it's time to update the display (every 2.5 seconds)
+  if (currentTime - lastUpdateTime >= updateInterval) {
+    lastUpdateTime = currentTime;
+    
+    // Clear the first row and display BPM
     lcd.setCursor(0, 0);
-
-    if (beatCount > 0) {
-      int avgBPM = (beatCount * 60000) / DISPLAY_INTERVAL;
-
-      lcd.print("BPM: ");
-      lcd.print(BPM);
-      lcd.setCursor(0, 1);
-      lcd.print("Avg: ");
-      lcd.print(avgBPM);
-
-      Serial.println("------------------------");
-      Serial.print("Heart Rate: ");
-      Serial.print(BPM);
-      Serial.print(" BPM (Instant), ");
-      Serial.print(avgBPM);
-      Serial.println(" BPM (3-sec avg)");
-      Serial.println("------------------------");
+    lcd.print("BPM: ");
+    
+    // Only display BPM if it's in a reasonable range
+    if (myBPM > 30 && myBPM < 200) {
+      // Print BPM value with leading spaces for alignment
+      if (myBPM < 100) {
+        lcd.print(" ");
+      }
+      lcd.print(myBPM);
+      
+      // Display heart character at positions 12-16
+      for (int i = 12; i <= 16; i++) {
+        lcd.setCursor(i, 0);
+        lcd.write(byte(0)); // Display the custom heart
+      }
     } else {
-      lcd.print("No Pulse");
-      lcd.setCursor(0, 1);
-      lcd.print("Try Again");
-
-      Serial.println("------------------------");
-      Serial.println("No valid pulse detected");
-      Serial.println("------------------------");
+      lcd.print("---");
+      // Clear heart positions in case they were set before
+      lcd.setCursor(12, 0);
+      lcd.print("     ");
     }
-
-    lastDisplayTime = currentTime;
-    beatCount = 0;
+    
+    /* Update second row with the detection status
+    lcd.setCursor(0, 1);
+    if (pulseSensor.sawStartOfBeat()) {
+      lcd.print("Pulse Detected   ");
+    } else {
+      lcd.print("Monitoring...    ");
+    }*/
   }
-
-  delay(20);
+  
+  // If a beat happened, print to Serial for debugging
+  if (pulseSensor.sawStartOfBeat()) {
+    Serial.println("♥  A HeartBeat Happened!");
+    Serial.print("BPM: ");
+    Serial.println(myBPM);
+  }
+  
+  delay(20); // Short delay for stability
 }
-
-
-
-
-/*
-Pulse Sensor	A0 (Analog In)
-I2C LCD - SDA	D2 (GPIO 4)
-I2C LCD - SCL	D1 (GPIO 5)
-LED (optional)	D4 (GPIO 2)
-
-*/
