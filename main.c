@@ -1,9 +1,13 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <ESP8266WiFi.h>
+#include <PulseSensorPlayground.h>
 
 // LCD setup (address, columns, rows)
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+#define RED_LED_PIN 1
+#define GREEN_LED_PIN 16
+#define BUZZER_PIN 13
 
 // ADXL345 Register Addresses
 #define ADXL345_ADDRESS 0x53
@@ -19,6 +23,12 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 #define VELOCITY_DECAY 0.95
 #define STEP_LENGTH 0.762  // in meters (2.5 feet)
 #define REQUIRED_SAMPLES 50  // Stabilization samples
+
+// Pulse Sensor setup
+#define PULSE_SENSOR_PIN A0  // Connect HW827 pulse sensor to A0 (Analog pin)
+#define THRESHOLD 550        // Adjust this as needed for your sensor
+unsigned long lastValidReading = 0;
+int lastBpm = 0;
 
 // Arrays for storing acceleration data
 float acc_x[WINDOW_SIZE];
@@ -39,13 +49,18 @@ float total_distance = 0.0;
 bool is_stabilized = false;
 int stabilization_samples = 0;
 
+// Pulse sensor object
+PulseSensorPlayground pulseSensor;
+unsigned long lastPulseUpdate = 0;
+int bpm = 0;
+
 void setup() {
   // Initialize serial communication
   Serial.begin(115200);
-  Serial.println("Step counter initializing...");
+  Serial.println("Step counter and pulse sensor initializing...");
   
   // Initialize I2C communication
-  Wire.begin(D2, D1);  // SDA = D2 (GPIO4), SCL = D1 (GPIO5)
+  Wire.begin(4, 5);  // SDA = D2 (GPIO4), SCL = D1 (GPIO5)
   
   // Initialize ADXL345
   writeRegister(POWER_CTL, 0x08);     // Power on
@@ -61,22 +76,107 @@ void setup() {
   lcd.setCursor(0, 1);
   lcd.print("Please wait");
   
+  // Initialize Pulse Sensor
+  pulseSensor.analogInput(PULSE_SENSOR_PIN);
+  pulseSensor.setThreshold(THRESHOLD);
+  
+  // Skip the timing check in ESP8266 setup
+  pulseSensor.setSerial(Serial);
+  pulseSensor.begin();
+  
   // Initialize buffers
   fill_initial_buffers();
+
+   pinMode(RED_LED_PIN, OUTPUT);
+  pinMode(GREEN_LED_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  
+  // Initialize both LEDs to off
+  digitalWrite(RED_LED_PIN, LOW);
+  digitalWrite(GREEN_LED_PIN, LOW);
+  digitalWrite(BUZZER_PIN, LOW);
 }
 
 void loop() {
+  // Update pulse sensor readings
+  updatePulseSensor();
+   if (bpm == 238 && bpm == lastBpm) {
+    if (millis() - lastValidReading > 5000) {  // No change for 5 seconds
+      Serial.println("Pulse sensor appears stuck. Attempting reset...");
+      
+      // Try to reset the sensor by restarting the library
+      pulseSensor.begin();
+      
+      lastValidReading = millis();
+    }
+  } else if (bpm != lastBpm) {
+    lastValidReading = millis();
+  }
+  
+  lastBpm = bpm;
+  
   if (!is_stabilized) {
     stabilization_samples++;
     if (stabilization_samples >= REQUIRED_SAMPLES) {
       is_stabilized = true;
       update_display();  // Show initial zeros
+      bpm = pulseSensor.getBeatsPerMinute();
+       if (bpm > 170) {
+        // High heart rate - activate red LED and buzzer
+        digitalWrite(RED_LED_PIN, HIGH);
+        digitalWrite(GREEN_LED_PIN, LOW);
+        digitalWrite(BUZZER_PIN, HIGH);
+      } 
+      else {
+        // Normal heart rate - activate green LED only
+        digitalWrite(RED_LED_PIN, LOW);
+        digitalWrite(GREEN_LED_PIN, HIGH);
+        digitalWrite(BUZZER_PIN, LOW);
+      }
     }
-  } else {
+  } 
+  else {
     update_step_counter();
+    lcd.setCursor(9, 0);
+      lcd.print("BPM:");
+      bpm = pulseSensor.getBeatsPerMinute();
+      lcd.print(bpm);
+      lcd.print("  ");
+       if (bpm > 170) {
+        // High heart rate - activate red LED and buzzer
+        digitalWrite(RED_LED_PIN, HIGH);
+        digitalWrite(GREEN_LED_PIN, LOW);
+        tone(BUZZER_PIN, 2000);
+      } 
+      else {
+        // Normal heart rate - activate green LED only
+        digitalWrite(RED_LED_PIN, LOW);
+        digitalWrite(GREEN_LED_PIN, HIGH);
+        digitalWrite(BUZZER_PIN, LOW);
+      }
   }
   
   delay(10);  // 10ms delay (100Hz)
+}
+
+void updatePulseSensor() {
+  // Print the raw sensor value
+  int rawValue = analogRead(PULSE_SENSOR_PIN);
+  Serial.print("Raw sensor value: ");
+  Serial.println(rawValue);
+  
+  // Continue with existing code
+  if (pulseSensor.sawNewSample()) {
+    Serial.println("New sample detected");
+    if (pulseSensor.sawStartOfBeat()) {
+      bpm = pulseSensor.getBeatsPerMinute();
+      Serial.print("Beat detected! BPM: ");
+      Serial.println(bpm);
+      
+      
+      
+    }
+  }
 }
 
 void fill_initial_buffers() {
@@ -158,6 +258,13 @@ void update_display() {
   lcd.setCursor(0, 0);
   lcd.print("Steps: ");
   lcd.print(steps);
+  
+  // Preserve BPM display in right corner
+  lcd.setCursor(9, 0);
+      lcd.print("BPM:");
+      bpm = pulseSensor.getBeatsPerMinute();
+      lcd.print(bpm);
+      lcd.print("  ");
   
   lcd.setCursor(0, 1);
   float distance_ft = total_distance * 3.28084;  // Convert meters to feet
